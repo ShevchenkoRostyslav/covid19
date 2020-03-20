@@ -6,7 +6,7 @@ import geonamescache # for countries population
 geo_countries = geonamescache.GeonamesCache().get_countries_by_names()
 
 
-def generate_corona_map(datasets: Dict[str: pd.DataFrame], date: str, colours: Dict[str: str]):
+def generate_corona_map(datasets: Dict[str, pd.DataFrame], date: str, colours: Dict[str, str]):
     """
 
     :param datasets:
@@ -20,22 +20,24 @@ def generate_corona_map(datasets: Dict[str: pd.DataFrame], date: str, colours: D
     for name, dataset in datasets.items():
         if name not in colours:
             raise ValueError(f'Colour for {name} is not provided.')
-        # add markers one by one on the map
+        # iterate through the countries
         for i in range(0, len(dataset)):
             data = dataset.iloc[i]
-
+            # add marker to the map
+            _add_marker(m, data, date=date, colour=colours[name], norm_to_population=False)
+    return m
 
 def _add_marker(m, data: pd.Series, date: str, colour: str, norm_to_population=False):
     value = data[date]
     country = data['Country/Region']
     # multiplication factor for visualization
-    visual_factor = 20
+    visual_factor = 10
     # skip countries with 0 affected and Cruise Ship
-    if value != 0 and country != 'Cruise Ship':
+    if value > 0 and country not in ['Cruise Ship', 'San Marino', 'Holy See']:
         # apply normalisation
         if norm_to_population:
             value /= country_population(country)
-            visual_factor = 100
+            visual_factor = 1.5e8
         marker = folium.Circle(
               location=(data['Lat'], data['Long']),
               popup=country+' '+value.astype(str),
@@ -62,10 +64,13 @@ def country_population(country_name: str) -> int :
     if country == 'Congo (Kinshasa)': country = 'Democratic Republic of the Congo'
     if country == "Cote d'Ivoire": country = 'Ivory Coast'
     if country == 'occupied Palestinian territory': country = 'Palestinian Territory'
+    if country == 'Congo (Brazzaville)': country = 'Republic of the Congo'
+    if country == 'The Bahamas': country = 'Bahamas'
+    if country == 'The Gambia': country = 'Gambia'
     return int(geo_countries[country]['population'])
 
 
-def load_datasets(data_path: str, confirmed: bool, deaths: bool) -> Dict[str: pd.DataFrame]:
+def load_datasets(data_path: str, confirmed: bool, deaths: bool) -> Dict[str, pd.DataFrame]:
     """Load timeseries datasets for confirmed and/or deaths.
 
     :param data_path: path to the novel-corona-virus-2019-dataset
@@ -85,6 +90,11 @@ def load_datasets(data_path: str, confirmed: bool, deaths: bool) -> Dict[str: pd
 
 
 def create_corona_spread_gif():
+    date='3/17/20'
+    datasets = load_datasets('novel-corona-virus-2019-dataset', confirmed=True, deaths=True)
+    colours = {'deaths': 'black', 'confirmed': 'crimson'}
+    corona_map = generate_corona_map(datasets, date, colours=colours)
+    corona_map.save('mymap.html')
 
 
 if __name__ == '__main__':
