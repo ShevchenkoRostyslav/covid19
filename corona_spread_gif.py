@@ -7,12 +7,12 @@ geo_countries = geonamescache.GeonamesCache().get_countries_by_names()
 
 
 def generate_corona_map(datasets: Dict[str, pd.DataFrame], date: str, colours: Dict[str, str]):
-    """
+    """Generate a single folium map from datasets for a given date.
 
-    :param datasets:
-    :param date:
-    :param colours:
-    :return:
+    :param datasets: timeseries datasets for confirmed and/or deaths
+    :param date: date string with a foramt mm/dd/yy
+    :param colours: dataset-name / colour to visualize
+    :return: folium map
     """
     # Make an empty map optimized for Europe
     m = folium.Map(location=[47, 12], zoom_start=5)
@@ -95,6 +95,9 @@ def create_corona_spread_gif():
     colours = {'deaths': 'black', 'confirmed': 'crimson'}
     corona_map = generate_corona_map(datasets, date, colours=colours)
     corona_map.save('mymap.html')
+
+
+
 
 
 if __name__ == '__main__':
