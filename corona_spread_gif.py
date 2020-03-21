@@ -16,12 +16,13 @@ import geonamescache # for countries population
 geo_countries = geonamescache.GeonamesCache().get_countries_by_names()
 
 
-def generate_corona_map(datasets: Dict[str, pd.DataFrame], date: str, colours: Dict[str, str]):
+def generate_corona_map(datasets: dict, date: str, colours: dict, norm_to_population=False):
     """Generate a single folium map from datasets for a given date.
 
     :param datasets: timeseries datasets for confirmed and/or deaths
     :param date: date string with a foramt mm/dd/yy
     :param colours: dataset-name / colour to visualize
+    :param norm_to_population: normalize the number of cases to the country population
     :return: folium map
     """
     # Make an empty map optimized for Europe
@@ -34,10 +35,20 @@ def generate_corona_map(datasets: Dict[str, pd.DataFrame], date: str, colours: D
         for i in range(0, len(dataset)):
             data = dataset.iloc[i]
             # add marker to the map
-            _add_marker(m, data, date=date, colour=colours[name], norm_to_population=False)
+            _add_marker(m, data, date=date, colour=colours[name], norm_to_population=norm_to_population)
     return m
 
-def _add_marker(m, data: pd.Series, date: str, colour: str, norm_to_population=False):
+
+def _add_marker(m, data: pd.Series, date: str, colour: str, norm_to_population: bool = False) -> None:
+    """Add individual marker/circle to the folium map.
+
+    :param m: folium map
+    :param data: timeseries with cases
+    :param date: str with date for which execute
+    :param colour: colour of the marker
+    :param norm_to_population: normalize to the population or not
+    :return:
+    """
     value = data[date]
     country = data['Country/Region']
     # multiplication factor for visualization
@@ -60,7 +71,26 @@ def _add_marker(m, data: pd.Series, date: str, colour: str, norm_to_population=F
         marker.add_to(m)
 
 
-def country_population(country_name: str) -> int :
+def add_text_to_map(m, text: str, font_size: int, position: tuple = (39.7339, 24.4858)) -> None:
+    """Add text to the map.
+
+    :param m: folium map
+    :param text: text to write on the map
+    :param font_size: font size of the text
+    :param position: Longitude and Lattitude of the text
+    :return:
+    """
+    folium.map.Marker(
+        position,
+        icon=folium.features.DivIcon(
+            icon_size=(150, 36),
+            icon_anchor=(0, 0),
+            html=f'<div style="font-size: {font_size}pt">{text}</div>',
+            )
+    ).add_to(m)
+
+
+def country_population(country_name: str) -> int:
     """Lookup the country population from external resources.
 
     :param country_name: name of the country
@@ -75,8 +105,8 @@ def country_population(country_name: str) -> int :
     if country == "Cote d'Ivoire": country = 'Ivory Coast'
     if country == 'occupied Palestinian territory': country = 'Palestinian Territory'
     if country == 'Congo (Brazzaville)': country = 'Republic of the Congo'
-    if country == 'The Bahamas': country = 'Bahamas'
-    if country == 'The Gambia': country = 'Gambia'
+    if country == 'The Bahamas' or country == 'Bahamas, The': country = 'Bahamas'
+    if country == 'The Gambia' or country == 'Gambia, The': country = 'Gambia'
     return int(geo_countries[country]['population'])
 
 
@@ -97,34 +127,6 @@ def load_datasets(data_path: str, confirmed: bool, deaths: bool) -> Dict[str, pd
     if deaths: keys.append('deaths')
     dataset = {name: pd.read_csv(f'{data_path}/time_series_covid_19_{name}.csv') for name in keys}
     return dataset
-
-
-def create_corona_spread_gif(args: Dict):
-    date = args['start_date']
-    # load the input data
-    datasets = load_datasets(args['input_dir'], confirmed=args['plot_confirmed'], deaths=args['plot_deaths'])
-    # assign colours
-    colours = {'deaths': 'black', 'confirmed': 'crimson'}
-    # extract available dates:
-    dates = get_list_of_dates(date, datasets)
-    screenshots = []
-    # iterate through the dates
-    for date in dates:
-        # check if map already exist
-        filename = 'map_'+date.replace('/', '_')
-        filename = f'{args["output_dir"]}/{filename}'
-        screenshot = filename+'.png'
-        # create a screenshot if doesn't exist
-        if not os.path.exists(screenshot):
-            # generate a single map
-            corona_map = generate_corona_map(datasets, date, colours=colours)
-            # save as png
-            screenshot = save_map_png(corona_map, filename=filename)
-            print(f'Date {date} has been processed.')
-        # append screenshot for the gif
-        screenshots.append(imageio.imread(screenshot))
-    # generate the gif
-    imageio.mimsave(f'{args["output_dir"]}/corona.gif', screenshots)
 
 
 def save_map_png(m, filename: str) -> str:
@@ -178,7 +180,7 @@ def get_list_of_dates(start_date, datasets):
 def parse_cmd_args():
     """Parse cmd user input
 
-    :return:
+    :return: the namespace object
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir", type=str, default='./output')
@@ -186,6 +188,7 @@ def parse_cmd_args():
     parser.add_argument('--plot_confirmed', type=bool, default=True)
     parser.add_argument('--plot_deaths', type=bool, default=True)
     parser.add_argument('--start_date', type=str, default='2/23/20', help='mm/dd/yy')
+    parser.add_argument('--normalize_to_population', type=bool, default=False, help='Normalize the number of cases to the country population')
     args = parser.parse_args()
     return args
 
@@ -217,6 +220,43 @@ def validate_cmd_args(args: argparse.Namespace) -> Dict:
     except ValueError:
         raise ValueError("Incorrect data format, should be mm/dd/yy")
     return arg_dict
+
+
+def create_corona_spread_gif(args: dict):
+    date = args['start_date']
+    # load the input data
+    datasets = load_datasets(args['input_dir'], confirmed=args['plot_confirmed'], deaths=args['plot_deaths'])
+    # assign colours
+    colours = {'deaths': 'black', 'confirmed': 'crimson'}
+    # extract available dates:
+    dates = get_list_of_dates(date, datasets)
+    # post_fix to the file names
+    filename_postfix = ''
+    if args['normalize_to_population']:
+        filename_postfix += '_norm_to_population'
+    screenshots = []
+    # iterate through the dates
+    for date in dates:
+        # check if map already exist
+        filename = 'map_'+date.replace('/', '_')
+        filename = f'{args["output_dir"]}/{filename}{filename_postfix}'
+        screenshot = filename+'.png'
+        # create a screenshot if doesn't exist
+        if not os.path.exists(screenshot):
+            # generate a single map
+            corona_map = generate_corona_map(datasets, date, colours=colours, norm_to_population=args['normalize_to_population'])
+            # add author name
+            add_text_to_map(corona_map, '@R.Shevchenko', font_size=13, position=(55.7, 23.4858))
+            # add date to the bottom
+            add_text_to_map(corona_map, date, font_size=24, position=(37.7339, 24.4858))
+            # save as png
+            screenshot = save_map_png(corona_map, filename=filename)
+            print(f'Date {date} has been processed.')
+        # append screenshot for the gif
+        screenshots.append(imageio.imread(screenshot))
+    # generate the gif
+    gif_name = f'{args["output_dir"]}/corona{filename_postfix}'
+    imageio.mimsave(f'{gif_name}.gif', screenshots)
 
 
 if __name__ == '__main__':
