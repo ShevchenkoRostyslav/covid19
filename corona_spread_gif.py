@@ -1,4 +1,14 @@
 from typing import Dict
+import argparse
+from pathlib import Path
+import datetime
+import os
+from selenium import webdriver
+from webdriver_manager.chrome import ChromeDriverManager
+from contextlib import redirect_stdout
+import time
+import imageio
+import io
 
 import folium
 import pandas as pd
@@ -89,16 +99,130 @@ def load_datasets(data_path: str, confirmed: bool, deaths: bool) -> Dict[str, pd
     return dataset
 
 
-def create_corona_spread_gif():
-    date='3/17/20'
-    datasets = load_datasets('novel-corona-virus-2019-dataset', confirmed=True, deaths=True)
+def create_corona_spread_gif(args: Dict):
+    date = args['start_date']
+    # load the input data
+    datasets = load_datasets(args['input_dir'], confirmed=args['plot_confirmed'], deaths=args['plot_deaths'])
+    # assign colours
     colours = {'deaths': 'black', 'confirmed': 'crimson'}
-    corona_map = generate_corona_map(datasets, date, colours=colours)
-    corona_map.save('mymap.html')
+    # extract available dates:
+    dates = get_list_of_dates(date, datasets)
+    screenshots = []
+    # iterate through the dates
+    for date in dates:
+        # check if map already exist
+        filename = 'map_'+date.replace('/', '_')
+        filename = f'{args["output_dir"]}/{filename}'
+        screenshot = filename+'.png'
+        # create a screenshot if doesn't exist
+        if not os.path.exists(screenshot):
+            # generate a single map
+            corona_map = generate_corona_map(datasets, date, colours=colours)
+            # save as png
+            screenshot = save_map_png(corona_map, filename=filename)
+            print(f'Date {date} has been processed.')
+        # append screenshot for the gif
+        screenshots.append(imageio.imread(screenshot))
+    # generate the gif
+    imageio.mimsave(f'{args["output_dir"]}/corona.gif', screenshots)
 
 
+def save_map_png(m, filename: str) -> str:
+    """Hack to save folium map as png.
 
+    :param m: folium map
+    :param filename: name of the output file without extension
+    :return name of the .png file
+    """
+    # save as html
+    tmpurl='file://{path}.html'.format(path=Path(filename).absolute())
+    m.save(f'{filename}.html')
+    out_file = f'{filename}.png'
+    screenshot_browser(tmpurl, filename=out_file)
+    return out_file
+
+
+def screenshot_browser(url, filename, delay=5) -> None:
+    """Run Chrome browser with selenium, load the url, take a screenshot.
+
+    :param url: url to load in Chrome
+    :param filename: filename of the screenshot
+    :param delay: seconds of the delay
+    :return:
+    """
+    out = io.StringIO()
+    with redirect_stdout(out):
+        # run selenium
+        browser = webdriver.Chrome(ChromeDriverManager().install())
+        browser.set_window_position(0, 0)
+        browser.set_window_size(800, 800)
+        browser.get(url)
+        # Give the map tiles some time to load
+        time.sleep(delay)
+        # save the screenshot
+        browser.save_screenshot(filename)
+        browser.quit()
+
+
+def get_list_of_dates(start_date, datasets):
+    """Exract the list of dates to make a gif for.
+
+    :param start_date: A date to start iterating from
+    :param datasets: timeseries datasets for confirmed and/or deaths
+    :return:
+    """
+    dates = [x for x in datasets.get('confirmed', 'deaths').columns[4:]]
+    start_index = dates.index(start_date)
+    return dates[start_index:]
+
+def parse_cmd_args():
+    """Parse cmd user input
+
+    :return:
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output_dir", type=str, default='./output')
+    parser.add_argument("--input_dir", type=str, default='./novel-corona-virus-2019-dataset')
+    parser.add_argument('--plot_confirmed', type=bool, default=True)
+    parser.add_argument('--plot_deaths', type=bool, default=True)
+    parser.add_argument('--start_date', type=str, default='2/23/20', help='mm/dd/yy')
+    args = parser.parse_args()
+    return args
+
+
+def validate_cmd_args(args: argparse.Namespace) -> Dict:
+    """Validate the cmd input
+
+    :param args: cmd inputs
+    :return:
+    """
+    arg_dict = vars(args)
+    # validate the output dir
+    try:
+        Path(arg_dict['output_dir']).mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        raise e
+    # validate the input dir
+    in_p = Path(arg_dict['input_dir'])
+    if not in_p.exists():
+        raise ValueError(f'Input directory: {arg_dict["input_dir"]} does not exist.')
+    # validate whether dir contains time_series datasets
+    for dtype in ['confirmed', 'deaths']:
+        filename = f'time_series_covid_19_{dtype}.csv'
+        if not (in_p / filename).exists() and arg_dict[f'plot_{dtype}'] == True:
+            raise ValueError(f'File {filename} is not found in {arg_dict["input_dir"]}.')
+    # validate start_date
+    try:
+        datetime.datetime.strptime(arg_dict['start_date'], '%m/%d/%y')
+    except ValueError:
+        raise ValueError("Incorrect data format, should be mm/dd/yy")
+    return arg_dict
 
 
 if __name__ == '__main__':
-    create_corona_spread_gif()
+    # read cmd arguments
+    args = parse_cmd_args()
+    # validate user input
+    args = validate_cmd_args(args)
+    # create a gif
+    create_corona_spread_gif(args)
